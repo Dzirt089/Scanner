@@ -20,4 +20,9 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.2" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Scanner.Models\Scanner.Models.csproj" />
+    <ProjectReference Include="..\Scanner.Services\Scanner.Services.csproj" />
+  </ItemGroup>
+
 </Project>

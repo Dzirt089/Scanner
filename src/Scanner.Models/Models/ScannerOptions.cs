@@ -1,4 +1,4 @@
-﻿namespace Scanner.WPF.Options
+﻿namespace Scanner.Models.Models
 {
 	public class ScannerOptions
 	{
