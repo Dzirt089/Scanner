@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/common/" />
+  <Folder Name="/src/">
+    <Project Path="src/Scanner.DataBase/Scanner.DataBase.csproj" />
+    <Project Path="src/Scanner.Models/Scanner.Models.csproj" />
+    <Project Path="src/Scanner.Services/Scanner.Services.csproj" />
+    <Project Path="src/Scanner.WPF/Scanner.WPF.csproj" />
+  </Folder>
+  <Folder Name="/tests/" />
+</Solution>
