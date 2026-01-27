@@ -2,11 +2,11 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-using Scanner.Models.Models;
+using Scanner.Abstractions.Models;
 using Scanner.Services.ScannerServices;
+using Scanner.Services.Utils;
 
 using System.Collections.Concurrent;
-using System.IO.Ports;
 
 namespace Scanner.Services.ScannerBackgroundServices
 {
@@ -14,7 +14,7 @@ namespace Scanner.Services.ScannerBackgroundServices
 	{
 		private readonly ScanChannel channel;
 		private readonly ILogger<SerialScannerHostedService> logger;
-		private readonly IOptions<ScannerOptions> options;
+		private readonly ScannerOptions options;
 
 		private readonly ConcurrentDictionary<string, PortListener> listeners = new();
 
@@ -22,7 +22,7 @@ namespace Scanner.Services.ScannerBackgroundServices
 		{
 			this.channel = channel;
 			this.logger = logger;
-			this.options = options;
+			this.options = options.Value;
 		}
 
 		private void TryOpen(PortListener listener)
@@ -35,51 +35,74 @@ namespace Scanner.Services.ScannerBackgroundServices
 		{
 			while (!stoppingToken.IsCancellationRequested)
 			{
-				var ports = SerialPort.GetPortNames();
+				//Полученные порты из компьютера
+				var ports = PresentComPorts.Get().ToArray();
+				var portsSet = new HashSet<string>(ports, StringComparer.OrdinalIgnoreCase);
 				var now = DateTime.Now;
 
-				foreach (var port in ports)
-				{
-					listeners.AddOrUpdate(port,
-						addValueFactory: port =>
+				// удаляем исчезнувший port со слушателем
+				DeleteDeathPorts(ports);
+
+				// добавляем новый port или обновляем существующий
+				AddOrUpdatePortListener(portsSet, now);
+
+				await Task.Delay(TimeSpan.FromSeconds(options.PortScanIntervalSeconds), stoppingToken);
+			}
+		}
+
+		/// <summary>
+		/// добавляем новый port или обновляем существующий
+		/// </summary>
+		/// <param name="portsSet"></param>
+		/// <param name="now"></param>
+		private void AddOrUpdatePortListener(HashSet<string> portsSet, DateTime now)
+		{
+			foreach (var port in portsSet)
+			{
+				// добавляем новый port или обновляем существующий
+				listeners.AddOrUpdate(port,
+					addValueFactory: port =>
+					{
+						var listner = new PortListener(port, channel.Channel.Writer);
+						TryOpen(listner);
+						logger.LogInformation("Слушатель создан для port: {Port}", port);
+						return listner;
+					},
+					updateValueFactory: (port, existing) =>
+					{
+						// Watchdog(сторожевой таймер): если порт "залип" (давно нет данных) — пересоздадим listener
+						var staleSec = (now - existing.LastReceived).TotalSeconds;
+						if ((staleSec > options.PortStaleSeconds) || (existing.HasFaulted))
 						{
+							logger.LogWarning("Слушатель устарел или завершился с ошибкой для {Port}, воссоздаём", port);
+							existing.Dispose();
+
 							var listner = new PortListener(port, channel.Channel.Writer);
 							TryOpen(listner);
-							logger.LogInformation("Слушатель создан для port: {Port}", port);
 							return listner;
-						},
-						updateValueFactory: (port, existing) =>
-						{
-							// Watchdog: если порт "залип" (давно нет данных) — пересоздадим listener
-							var staleSec = (now - existing.LastReceived).TotalSeconds;
-							if (staleSec > options.Value.PortStaleSeconds)
-							{
-								logger.LogWarning("Слушатель устарел для {Port}, воссоздание (устаревшие секунды={Stale})", port, staleSec);
-								existing.Dispose();
-
-								var listner = new PortListener(port, channel.Channel.Writer);
-								TryOpen(listner);
-								return listner;
-							}
-
-							return existing;
-						});
-				}
-
-				// удаляем исчезнувший port со слушателем
-				foreach (var keyValue in listeners)
-				{
-					if (Array.IndexOf(ports, keyValue.Key) < 0)
-					{
-						if (listeners.TryRemove(keyValue.Key, out var listener))
-						{
-							listener.Dispose();
-							logger.LogInformation("Слушатель расположен к {Port} (порт исчез)", keyValue.Key);
 						}
+
+						return existing;
+					});
+			}
+		}
+
+		/// <summary>
+		/// удаляем исчезнувший port со слушателем
+		/// </summary>
+		/// <param name="ports"></param>
+		private void DeleteDeathPorts(string[] ports)
+		{
+			foreach (var keyValue in listeners)
+			{
+				if (Array.IndexOf(ports, keyValue.Key) < 0)
+				{
+					if (listeners.TryRemove(keyValue.Key, out var listener))
+					{
+						listener.Dispose();
+						logger.LogInformation("Слушатель расположенный к {Port} (порт исчез)", keyValue.Key);
 					}
 				}
-
-				await Task.Delay(TimeSpan.FromSeconds(options.Value.PortScanIntervalSeconds), stoppingToken);
 			}
 		}
 

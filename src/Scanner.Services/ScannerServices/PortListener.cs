@@ -1,4 +1,4 @@
-﻿using Scanner.Models.Models;
+﻿using Scanner.Abstractions.Models;
 
 using System.IO.Ports;
 using System.Text;
@@ -16,6 +16,7 @@ namespace Scanner.Services.ScannerServices
 
 		public DateTime LastReceived { get; private set; } = DateTime.Now;
 		public string PortName => port.PortName;
+		public bool HasFaulted { get; private set; } = false;
 
 		public PortListener(string portName, ChannelWriter<ScanLine> writer)
 		{
@@ -80,14 +81,14 @@ namespace Scanner.Services.ScannerServices
 			}
 			catch
 			{
-				// логировать будет HostedService (пересоздаст listener)
+				HasFaulted = true;
 			}
 		}
 
 		public void Dispose()
 		{
-			try { port.DataReceived -= Port_DataReceived; } catch { }
-			try { if (port.IsOpen) port.Close(); } catch { }
+			try { port.DataReceived -= Port_DataReceived; } catch { HasFaulted = true; }//TODO: логировать
+			try { if (port.IsOpen) port.Close(); } catch { HasFaulted = true; }//TODO: логировать
 			port?.Dispose();
 		}
 	}

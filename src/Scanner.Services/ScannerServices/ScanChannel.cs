@@ -1,4 +1,4 @@
-﻿using Scanner.Models.Models;
+﻿using Scanner.Abstractions.Models;
 
 using System.Threading.Channels;
 
