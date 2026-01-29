@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 
 using Scanner.Abstractions.Models;
 using Scanner.Services.ScannerServices;
-using Scanner.Services.Utils;
+using Scanner.Services.SystemServices;
 
 using System.Collections.Concurrent;
 

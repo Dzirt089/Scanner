@@ -5,7 +5,8 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Scanner.WPF"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
+        Title="Сканнер" Height="450" Width="800"
+        Icon="/Icons/Scanner-3.ico">
     <Grid>
 		<Grid.ColumnDefinitions>
 			<ColumnDefinition/>

@@ -11,9 +11,16 @@ public sealed class TrayIconService : IDisposable
 	{
 		if (notify != null) return;
 
+		var baseDir = AppContext.BaseDirectory;
+		var iconPath = System.IO.Path.Combine(baseDir, "Icons", "Scanner-3.ico");
+
+		Icon icon = System.IO.File.Exists(iconPath)
+		? new Icon(iconPath)  // Загружаем PNG
+		: SystemIcons.Application; // Fallback
+
 		notify = new NotifyIcon
 		{
-			Icon = SystemIcons.Application,
+			Icon = icon,
 			Visible = true,
 			Text = "Scanner WPF"
 		};

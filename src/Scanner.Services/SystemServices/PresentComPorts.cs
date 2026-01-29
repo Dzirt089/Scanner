@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace Scanner.Services.Utils
+namespace Scanner.Services.SystemServices
 {
 	/// <summary>
 	/// Класс перечисления устройств - это собранный “классический” шаблон SetupAPI enumeration 
