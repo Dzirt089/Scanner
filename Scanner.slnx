@@ -3,7 +3,7 @@
     <File Path="README.md" />
   </Folder>
   <Folder Name="/src/">
-    <Project Path="src/Scanner.DataBase/Scanner.DataBase.csproj" />
+    <Project Path="src/Scanner.DataBase/Scanner.Infrastructure.csproj" />
     <Project Path="src/Scanner.Models/Scanner.Abstractions.csproj" />
     <Project Path="src/Scanner.Services/Scanner.Services.csproj" />
     <Project Path="src/Scanner.WPF/Scanner.WPF.csproj" />

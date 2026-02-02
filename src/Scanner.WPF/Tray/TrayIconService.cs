@@ -15,8 +15,8 @@ public sealed class TrayIconService : IDisposable
 		var iconPath = System.IO.Path.Combine(baseDir, "Icons", "Scanner-3.ico");
 
 		Icon icon = System.IO.File.Exists(iconPath)
-		? new Icon(iconPath)  // Загружаем PNG
-		: SystemIcons.Application; // Fallback
+		? new Icon(iconPath)
+		: SystemIcons.Application;
 
 		notify = new NotifyIcon
 		{
@@ -41,6 +41,9 @@ public sealed class TrayIconService : IDisposable
 		w.Show();
 		w.WindowState = WindowState.Normal;
 		w.Activate();
+		w.Topmost = true;  // important
+		w.Topmost = false; // important
+		w.Focus();
 	}
 
 	public void Dispose()
@@ -48,6 +51,8 @@ public sealed class TrayIconService : IDisposable
 		if (notify != null)
 		{
 			notify.Visible = false;
+			notify.Icon?.Dispose();
+			notify.Icon = null;
 			notify.Dispose();
 			notify = null;
 		}

@@ -4,9 +4,9 @@ using Scanner.Abstractions.Models;
 
 namespace Scanner.Abstractions.Messages
 {
-	public sealed class ScanReceivedMessage : ValueChangedMessage<ScanLine>
+	public sealed class ScanReceivedMessage : ValueChangedMessage<InformationOnAutomation>
 	{
-		public ScanReceivedMessage(ScanLine value) : base(value)
+		public ScanReceivedMessage(InformationOnAutomation value) : base(value)
 		{
 		}
 	}

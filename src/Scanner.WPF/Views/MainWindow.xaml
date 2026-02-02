@@ -8,11 +8,80 @@
         Title="Сканнер" Height="450" Width="800"
         Icon="/Icons/Scanner-3.ico">
     <Grid>
-		<Grid.ColumnDefinitions>
-			<ColumnDefinition/>
-			<ColumnDefinition/>
-		</Grid.ColumnDefinitions>
+		<Grid.RowDefinitions>
+			<RowDefinition Height="*"/>
+			<RowDefinition Height="Auto"/>
+		</Grid.RowDefinitions>
+		
+		<ListView Grid.Row="0" 
+            ItemsSource="{Binding LastScans, Mode=OneWay, UpdateSourceTrigger=PropertyChanged}">
+			<ListView.View>
+				<GridView>
+					<GridViewColumn Header="№ Заказа" Width="70"
+                                    DisplayMemberBinding="{Binding ZakNm}"/>
+					<GridViewColumn Header="Артикул" Width="120"
+                                    DisplayMemberBinding="{Binding Art}"/>
+					<GridViewColumn Header="Наименование" Width="200"
+                                    DisplayMemberBinding="{Binding Name}"/>
+					<GridViewColumn Header="Система" Width="50"
+									DisplayMemberBinding="{Binding NameVkc}"/>
+					<GridViewColumn Header="План" Width="70"
+									DisplayMemberBinding="{Binding Planed, StringFormat=dd.MM.yyyy}"/>
+					<GridViewColumn Header="Время скана" Width="100"
+									DisplayMemberBinding="{Binding ScanerTime, StringFormat=dd.MM.yyyy HH.mm}"/>
+					<GridViewColumn Header="Отделение" Width="150"
+									DisplayMemberBinding="{Binding Department}"/>
+				</GridView>
+			</ListView.View>
+		</ListView>
 
-		<ListView ItemsSource="{Binding LastScans, Mode=OneWay, UpdateSourceTrigger=PropertyChanged}"/>
+		<!-- Панель с кнопкой -->
+		<StackPanel Grid.Row="1" Orientation="Horizontal" Margin="5">
+			<Button Content="Последние активные сканеры" Command="{Binding RefreshScansCommand}" Padding="10,5"/>
+		</StackPanel>
+
+		<!-- Всплывающее окно -->
+		<Popup x:Name="ScannersPopup" 
+           Placement="Center" 
+           StaysOpen="False"
+           IsOpen="{Binding IsPopupOpen, Mode=TwoWay}"
+           Width="400" Height="300">
+			<Border Background="White" BorderBrush="Gray" BorderThickness="1" 
+                CornerRadius="5" Padding="10">
+				<Grid>
+					<Grid.RowDefinitions>
+						<RowDefinition Height="Auto"/>
+						<RowDefinition Height="*"/>
+						<RowDefinition Height="Auto"/>
+					</Grid.RowDefinitions>
+
+					<TextBlock Grid.Row="0" Text="Активные сканеры" 
+                           FontWeight="Bold" FontSize="14" Margin="0,0,0,10"/>
+
+					<ListView Grid.Row="1" ItemsSource="{Binding Scans}">
+						<ListView.View>
+							<GridView>
+								<GridViewColumn Header="Имя" Width="120" 
+                                            DisplayMemberBinding="{Binding Name}"/>
+								<GridViewColumn Header="Активен" Width="60">
+									<GridViewColumn.CellTemplate>
+										<DataTemplate>
+											<CheckBox IsChecked="{Binding IsActive}" 
+                                                  IsEnabled="False"/>
+										</DataTemplate>
+									</GridViewColumn.CellTemplate>
+								</GridViewColumn>
+								<GridViewColumn Header="Последнее обновление" Width="140"
+                                            DisplayMemberBinding="{Binding LastReceived, StringFormat=dd.MM.yyyy HH:mm}"/>
+							</GridView>
+						</ListView.View>
+					</ListView>
+
+					<Button Grid.Row="2" Content="Закрыть" HorizontalAlignment="Right" 
+                        Margin="0,10,0,0" Padding="10,3"
+                        Command="{Binding ClosePopupCommand}"/>
+				</Grid>
+			</Border>
+		</Popup>
 	</Grid>
 </Window>

@@ -1,10 +1,10 @@
-﻿using CommunityToolkit.Mvvm.Messaging;
-
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 using Scanner.Abstractions.Contracts;
+using Scanner.Abstractions.Extensions;
 using Scanner.Abstractions.Messages;
+using Scanner.Abstractions.Metrics;
 using Scanner.Abstractions.Models;
 
 namespace Scanner.Services.ProcessingServices
@@ -13,26 +13,58 @@ namespace Scanner.Services.ProcessingServices
 	{
 		private readonly ILogger<ScanProcessor> logger;
 		private readonly ScannerOptions options;
-		private readonly IMessenger messenger;
+		private readonly IScanEventSink scanEventSink;
+		private readonly IPortCompliteRepository compliteRepository;
 
-		public ScanProcessor(ILogger<ScanProcessor> logger, IOptions<ScannerOptions> options, IMessenger messenger)
+		public ScanProcessor(
+			ILogger<ScanProcessor> logger,
+			IOptions<ScannerOptions> options,
+			IScanEventSink scanEventSink,
+			IPortCompliteRepository compliteRepository)
 		{
 			this.logger = logger;
 			this.options = options.Value;
-			this.messenger = messenger;
+			this.scanEventSink = scanEventSink;
+			this.compliteRepository = compliteRepository;
 		}
 
-		public Task ProcessAsync(ScanLine line, CancellationToken token)
+		public async Task ProcessAsync(ScanLine line, CancellationToken token)
 		{
 			if (!options.KnownPrefixes.Any(_ => line.Line.StartsWith(_, StringComparison.OrdinalIgnoreCase)))
-				return Task.CompletedTask;
+			{
+				ScannerTelemetry.ScansFiltered.Add(1);
+				return;
+			}
 
-			// Парсим строку и отправляем в БД
-			logger.LogInformation("Принят скан: {Line}", line);
+			if (!line.Line.TryParseScan(out var column, out var idAuto))
+			{
+				ScannerTelemetry.ScansFailed.Add(1);
+				logger.LogWarning("Не удалось распарсить скан: {Line}", line.Line);
+				return;
+			}
 
-			messenger.Send(new ScanReceivedMessage(line));
+			var dateNow = DateTime.Now;
+			var isChecked = await compliteRepository.SetDateDbRowsByIdAutoAsync(column, idAuto, dateNow, token);
+			if (!isChecked)
+			{
+				ScannerTelemetry.ScansFailed.Add(1);
+				logger.LogWarning("Не удалось обновить запись для idAuto: {IdAuto}, column: {Column}", idAuto, column);
+				return;
+			}
 
-			return Task.CompletedTask;
+			ScannerTelemetry.ScansDbUpdated.Add(1);
+
+			InformationOnAutomation? automations = await compliteRepository.GetNameAutoDbRowsByIdAutoAsync(idAuto, column, dateNow, token);
+			if (automations is null)
+			{
+				ScannerTelemetry.ScansFailed.Add(1);
+				logger.LogWarning("Не найдена запись автоматики для idAuto: {IdAuto}, column: {Column}", idAuto, column);
+				return;
+			}
+
+			scanEventSink.PublishScanEvent(new ScanReceivedMessage(automations));
+
+			return;
 		}
 	}
 }

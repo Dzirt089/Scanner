@@ -5,17 +5,30 @@ using MailerVKT;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
+using Scanner.Abstractions.Configuration;
 using Scanner.Abstractions.Contracts;
 using Scanner.Abstractions.Models;
+using Scanner.Infrastructure.ConnectionFactory;
+using Scanner.Infrastructure.Repositories;
 using Scanner.Services.ProcessingServices;
 using Scanner.Services.ScannerBackgroundServices;
 using Scanner.Services.ScannerServices;
 using Scanner.Services.SystemServices;
+using Scanner.WPF.Messages;
 using Scanner.WPF.Tray;
 using Scanner.WPF.ViewModels;
 using Scanner.WPF.Views;
 
+using OpenTelemetry.Trace;
+
+using Serilog;
+using Serilog.Enrichers.Span;
+using Serilog.Sinks.MSSqlServer;
+
 using System.Windows;
+using Scanner.Abstractions.Metrics;
+using OpenTelemetry;
+using Scanner.WPF.Telemetry;
 
 namespace Scanner.WPF
 {
@@ -29,6 +42,41 @@ namespace Scanner.WPF
 		/// </summary>
 		public static IHost Host { get; } = Microsoft.Extensions.Hosting.Host
 			.CreateDefaultBuilder()
+			.UseSerilog((context, services, config) =>
+			{
+				var connection = context.Configuration["ConnectionStrings:ConnectionString"]
+				?? throw new InvalidOperationException("ConnectionStrings:ConnectionString is not configured.");
+
+				var options = new Serilog.Sinks.MSSqlServer.MSSqlServerSinkOptions
+				{
+					TableName = "tbVKT_PlanAuto_ScannerLogs",
+					AutoCreateSqlTable = true,
+
+					BatchPostingLimit = 50,
+					BatchPeriod = TimeSpan.FromSeconds(2),
+				};
+
+				var columnOptions = new ColumnOptions();
+				columnOptions.Store.Remove(StandardColumn.Properties);
+
+				columnOptions.Store.Add(StandardColumn.LogEvent);
+				columnOptions.LogEvent.DataLength = -1; // Максимальная длина для LogEvent (неограниченная)
+
+				columnOptions.Store.Add(StandardColumn.TraceId);
+				columnOptions.Store.Add(StandardColumn.SpanId);
+
+				config.MinimumLevel.Information()
+					.MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+					.Enrich.FromLogContext()
+					.Enrich.WithSpan() // Добавляет SpanId и TraceId в логи
+					.WriteTo.File("Logs/scanner-.log", rollingInterval: Serilog.RollingInterval.Day, shared: true)
+					.WriteTo.Async(_ =>
+						_.MSSqlServer(
+							connectionString: connection,
+							sinkOptions: options,
+							columnOptions: columnOptions));
+
+			})
 			.ConfigureServices((context, services) =>
 			{
 				// infrastructure
@@ -36,19 +84,33 @@ namespace Scanner.WPF
 				services.AddSingleton<TrayIconService>();
 				services.AddSingleton<ScanChannel>();
 				services.AddSingleton<Sender>();
+				services.AddScoped<IScanEventSink, MessengerScanEventSink>();
+
+				//Db
+				services.AddSingleton<IDbConnectionFactory, DbConnectionFactory>();
+				services.AddScoped<IPortCompliteRepository, PortCompliteRepository>();
 
 				//UI
 				services.AddScoped<MainViewModel>();
 
 				// загружаем настройки в DI из json
 				services.Configure<ScannerOptions>(context.Configuration.GetSection("Scanner"));
+				services.Configure<DbConfiguration>(context.Configuration.GetSection("ConnectionStrings"));
 
 				// обработка данных и отправка в БД
 				services.AddScoped<IScanProcessor, ScanProcessor>();
 
+				// состояние сканера
+				services.AddSingleton<IScannerRuntimeState, ScannerRuntimeState>();
+
 				// фоновая работа (BackgroundService)
 				services.AddHostedService<SerialScannerHostedService>();
 				services.AddHostedService<ScanProcessingHostedService>();
+
+				services.AddOpenTelemetry().WithTracing(_ => _
+					.AddSource(ScannerTelemetry.ActivitySourceName)
+					.AddSqlClientInstrumentation()
+					.AddProcessor(new BatchActivityExportProcessor(new SerilogSpanExporter())));
 			})
 			.Build();
 
@@ -148,7 +210,7 @@ namespace Scanner.WPF
 		{
 			// Обработка исключения
 			HandleException(e.Exception);
-			e.Handled = true; // Предотвращаем крах приложения
+			e.Handled = true; // Предотвращаем крах приложения			
 		}
 
 		/// <summary>

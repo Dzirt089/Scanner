@@ -16,7 +16,20 @@ namespace Scanner.Services.ScannerServices
 
 		public DateTime LastReceived { get; private set; } = DateTime.Now;
 		public string PortName => port.PortName;
-		public bool HasFaulted { get; private set; } = false;
+
+
+		private Exception? _lastError;
+		public Exception? LastError => _lastError;
+
+
+		private int _hasFaulted;
+		public bool HasFaulted => Volatile.Read(ref _hasFaulted) == 1;
+
+		private void MarkFaulted(Exception ex)
+		{
+			Volatile.Write(ref _hasFaulted, 1);
+			_lastError = ex;
+		}
 
 		public PortListener(string portName, ChannelWriter<ScanLine> writer)
 		{
@@ -79,16 +92,19 @@ namespace Scanner.Services.ScannerServices
 					}
 				}
 			}
-			catch
+			catch (Exception ex)
 			{
-				HasFaulted = true;
+				MarkFaulted(ex);
 			}
 		}
 
 		public void Dispose()
 		{
-			try { port.DataReceived -= Port_DataReceived; } catch { HasFaulted = true; }//TODO: логировать
-			try { if (port.IsOpen) port.Close(); } catch { HasFaulted = true; }//TODO: логировать
+			try { port.DataReceived -= Port_DataReceived; }
+			catch (Exception ex) { MarkFaulted(ex); }
+
+			try { if (port.IsOpen) port.Close(); }
+			catch (Exception ex) { MarkFaulted(ex); }
 			port?.Dispose();
 		}
 	}
