@@ -1,4 +1,5 @@
-﻿using Scanner.Abstractions.Extensions;
+﻿using Scanner.Abstractions.Contracts;
+using Scanner.Abstractions.Extensions;
 using Scanner.Abstractions.Models;
 
 using System.Collections.Concurrent;

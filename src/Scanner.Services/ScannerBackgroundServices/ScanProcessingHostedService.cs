@@ -2,12 +2,9 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
+using Scanner.Abstractions.Channels;
 using Scanner.Abstractions.Contracts;
-using Scanner.Abstractions.Metrics;
 using Scanner.Abstractions.Models;
-using Scanner.Services.ScannerServices;
-
-using System.Diagnostics;
 
 namespace Scanner.Services.ScannerBackgroundServices
 {
@@ -17,50 +14,50 @@ namespace Scanner.Services.ScannerBackgroundServices
 		private readonly IServiceScopeFactory scopeFactory;
 		private readonly ILogger<ScanProcessingHostedService> logger;
 		private readonly IScannerRuntimeState scannerRuntimeState;
+		private readonly IErrorReporter reporter;
 
-		public ScanProcessingHostedService(ScanChannel channel, IServiceScopeFactory scopeFactory, ILogger<ScanProcessingHostedService> logger, IScannerRuntimeState scannerRuntimeState)
+		public ScanProcessingHostedService(ScanChannel channel, IServiceScopeFactory scopeFactory, ILogger<ScanProcessingHostedService> logger, IScannerRuntimeState scannerRuntimeState, IErrorReporter reporter)
 		{
 			this.channel = channel;
 			this.scopeFactory = scopeFactory;
 			this.logger = logger;
 			this.scannerRuntimeState = scannerRuntimeState;
+			this.reporter = reporter;
 		}
 
 		protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 		{
 			await foreach (ScanLine scan in channel.Channel.Reader.ReadAllAsync(stoppingToken))
 			{
-				ScannerTelemetry.ScansDequeued.Add(1);
-				using var activity = ScannerTelemetry.ActivitySource.StartActivity("scan.process", ActivityKind.Consumer);
-				activity?.SetTag("scanner.port", scan.PortName);
-				activity?.SetTag("scanner.line", scan.Line);
+				var scanId = Guid.NewGuid().ToString("N");
 
-				// ВАЖНО: BeginScope даст “сквозные” поля в логах (в т.ч. в SQL через Serilog)
 				using (logger.BeginScope(new Dictionary<string, object?>
 				{
 					["port"] = scan.PortName,
 					["line"] = scan.Line,
-					["trace_id"] = Activity.Current?.TraceId.ToString(),
-					["span_id"] = Activity.Current?.SpanId.ToString(),
+					["scan_id"] = scanId,
 				}))
 				{
+					logger.LogInformation("Достали данные из канала (это “точка входа” в обработку)"); //dequeued
 					try
 					{
 						using var scope = scopeFactory.CreateScope();
 						var processor = scope.ServiceProvider.GetRequiredService<IScanProcessor>();
 
 						await processor.ProcessAsync(scan, stoppingToken);
-						scannerRuntimeState.TryUpdateName(scan.PortName, scan.Line);
+						logger.LogInformation("Нашли автоматику и отправили в UI"); //completed
+
+						var isUpd = scannerRuntimeState.TryUpdateName(scan.PortName, scan.Line);
+						if (isUpd)
+							logger.LogInformation("Обновили имя сканера и отправили в UI");
+						else
+							logger.LogInformation("Имя сканера не изменилось");
 					}
 					catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
 					catch (Exception ex)
 					{
-						ScannerTelemetry.ScansFailed.Add(1);
-
-						activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-						activity?.AddException(ex);						
-
-						logger.LogWarning(ex, "Scan processing failed: {Port} {Line}", scan.PortName, scan.Line);
+						reporter.Report(ex, "Ошибка при обработке строки сканирования");
+						logger.LogError(ex, "Предупреждение! Ошибка при обработке строки сканирования");//failed
 					}
 				}
 			}

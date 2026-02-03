@@ -1,4 +1,5 @@
-﻿using Scanner.Abstractions.Models;
+﻿using Scanner.Abstractions.Contracts;
+using Scanner.Abstractions.Models;
 
 using System.IO.Ports;
 using System.Text;
@@ -10,6 +11,7 @@ namespace Scanner.Services.ScannerServices
 	{
 		private readonly SerialPort port;
 		private readonly ChannelWriter<ScanLine> writer;
+		private readonly IErrorReporter reporter;
 
 		private readonly object sync = new();
 		private readonly StringBuilder buffer = new();
@@ -29,9 +31,10 @@ namespace Scanner.Services.ScannerServices
 		{
 			Volatile.Write(ref _hasFaulted, 1);
 			_lastError = ex;
+			reporter.Report(ex, $"PortListener:{PortName}");
 		}
 
-		public PortListener(string portName, ChannelWriter<ScanLine> writer)
+		public PortListener(string portName, ChannelWriter<ScanLine> writer, IErrorReporter reporter)
 		{
 			this.writer = writer;
 			port = new SerialPort(portName)
@@ -45,6 +48,7 @@ namespace Scanner.Services.ScannerServices
 			};
 
 			port.DataReceived += Port_DataReceived;
+			this.reporter = reporter;
 		}
 
 		public void Open()

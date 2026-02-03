@@ -2,6 +2,8 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
+using Scanner.Abstractions.Channels;
+using Scanner.Abstractions.Contracts;
 using Scanner.Abstractions.Models;
 using Scanner.Services.ScannerServices;
 using Scanner.Services.SystemServices;
@@ -16,21 +18,30 @@ namespace Scanner.Services.ScannerBackgroundServices
 		private readonly ILogger<SerialScannerHostedService> logger;
 		private readonly ScannerOptions options;
 		private readonly IScannerRuntimeState scannerRuntimeState;
+		private readonly IErrorReporter reporter;
 
 		private readonly ConcurrentDictionary<string, PortListener> listeners = new(StringComparer.OrdinalIgnoreCase);
 
-		public SerialScannerHostedService(ScanChannel channel, ILogger<SerialScannerHostedService> logger, IOptions<ScannerOptions> options, IScannerRuntimeState scannerRuntimeState)
+		public SerialScannerHostedService(ScanChannel channel, ILogger<SerialScannerHostedService> logger, IOptions<ScannerOptions> options, IScannerRuntimeState scannerRuntimeState, IErrorReporter reporter)
 		{
 			this.channel = channel;
 			this.logger = logger;
 			this.options = options.Value;
 			this.scannerRuntimeState = scannerRuntimeState;
+			this.reporter = reporter;
 		}
 
 		private void TryOpen(PortListener listener)
 		{
-			try { listener.Open(); }
-			catch (Exception ex) { logger.LogWarning(ex, "Не удалось открыть port: {Port}", listener.PortName); }
+			try
+			{
+				listener.Open();
+			}
+			catch (Exception ex)
+			{
+				reporter.Report(ex, $"PortListener.Open:{listener.PortName}");
+				logger.LogWarning(ex, "Не удалось открыть port: {port}", listener.PortName);
+			}
 		}
 
 		protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -51,11 +62,15 @@ namespace Scanner.Services.ScannerBackgroundServices
 				try
 				{
 					await Task.Delay(TimeSpan.FromSeconds(options.PortScanIntervalSeconds), stoppingToken);
-
 				}
 				catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
 				{
 					break; // Выход из цикла при отмене\закрытии программы
+				}
+				catch (Exception ex)
+				{
+					reporter.Report(ex, "Ошибка в работе с COM-портами");
+					logger.LogError(ex, "Предупреждение! Ошибка в работе с COM-портами");//failed
 				}
 			}
 		}
@@ -73,9 +88,9 @@ namespace Scanner.Services.ScannerBackgroundServices
 				listeners.AddOrUpdate(port,
 					addValueFactory: port =>
 					{
-						var listner = new PortListener(port, channel.Channel.Writer);
+						var listner = new PortListener(port, channel.Channel.Writer, reporter);
 						TryOpen(listner);
-						logger.LogInformation("Слушатель создан для port: {Port}", port);
+						logger.LogInformation("Слушатель создан для port: {port}", port);
 						return listner;
 					},
 					updateValueFactory: (port, existing) =>
@@ -84,11 +99,11 @@ namespace Scanner.Services.ScannerBackgroundServices
 						var staleSec = (now - existing.LastReceived).TotalSeconds;
 						if ((staleSec > options.PortStaleSeconds) || (existing.HasFaulted))
 						{
-							logger.LogWarning(existing.LastError, "Слушатель устарел или завершился с ошибкой для {Port}, воссоздаём", port);
+							logger.LogWarning(existing.LastError, "Слушатель устарел или завершился с ошибкой для {port}, воссоздаём", port);
 							existing.Dispose();
 							scannerRuntimeState.Remove(existing.PortName);
 
-							var listner = new PortListener(port, channel.Channel.Writer);
+							var listner = new PortListener(port, channel.Channel.Writer, reporter);
 							TryOpen(listner);
 							return listner;
 						}
@@ -120,7 +135,7 @@ namespace Scanner.Services.ScannerBackgroundServices
 					{
 						listener.Dispose();
 						scannerRuntimeState.Remove(keyValue.Key);
-						logger.LogInformation("Слушатель расположенный к {Port} (порт исчез)", keyValue.Key);
+						logger.LogInformation("Слушатель расположенный к {port} (порт исчез)", keyValue.Key);
 					}
 				}
 			}

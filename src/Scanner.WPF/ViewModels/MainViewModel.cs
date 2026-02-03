@@ -2,9 +2,9 @@
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 
+using Scanner.Abstractions.Contracts;
 using Scanner.Abstractions.Messages;
 using Scanner.Abstractions.Models;
-using Scanner.Services.ScannerServices;
 
 using System.Collections.ObjectModel;
 using System.Windows.Threading;

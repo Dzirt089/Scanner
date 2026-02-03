@@ -5,30 +5,29 @@ using MailerVKT;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
+using Scanner.Abstractions.Channels;
 using Scanner.Abstractions.Configuration;
 using Scanner.Abstractions.Contracts;
 using Scanner.Abstractions.Models;
 using Scanner.Infrastructure.ConnectionFactory;
 using Scanner.Infrastructure.Repositories;
+using Scanner.Services.ErrorReports;
 using Scanner.Services.ProcessingServices;
 using Scanner.Services.ScannerBackgroundServices;
 using Scanner.Services.ScannerServices;
 using Scanner.Services.SystemServices;
+using Scanner.WPF.EventEnricher;
 using Scanner.WPF.Messages;
 using Scanner.WPF.Tray;
 using Scanner.WPF.ViewModels;
 using Scanner.WPF.Views;
 
-using OpenTelemetry.Trace;
-
 using Serilog;
-using Serilog.Enrichers.Span;
 using Serilog.Sinks.MSSqlServer;
 
+using System.Collections.ObjectModel;
+using System.Data;
 using System.Windows;
-using Scanner.Abstractions.Metrics;
-using OpenTelemetry;
-using Scanner.WPF.Telemetry;
 
 namespace Scanner.WPF
 {
@@ -60,15 +59,21 @@ namespace Scanner.WPF
 				columnOptions.Store.Remove(StandardColumn.Properties);
 
 				columnOptions.Store.Add(StandardColumn.LogEvent);
-				columnOptions.LogEvent.DataLength = -1; // Максимальная длина для LogEvent (неограниченная)
+				columnOptions.LogEvent.DataLength = -1; // Максимальная длина для LogEvent (неограниченная)				
 
-				columnOptions.Store.Add(StandardColumn.TraceId);
-				columnOptions.Store.Add(StandardColumn.SpanId);
+				columnOptions.AdditionalColumns = new Collection<SqlColumn>
+				{
+					new SqlColumn("scan_id", SqlDbType.NVarChar) { DataLength = 32, PropertyName = "scan_id", AllowNull = true },
+					new SqlColumn("port",    SqlDbType.NVarChar) { DataLength = 32, PropertyName = "port",    AllowNull = true },
+					new SqlColumn("column",  SqlDbType.NVarChar) { DataLength = 16, PropertyName = "column",  AllowNull = true },
+					new SqlColumn("id_auto", SqlDbType.Int)      { PropertyName = "id_auto", AllowNull = true },
+				};
+				columnOptions.LogEvent.ExcludeAdditionalProperties = true;
 
 				config.MinimumLevel.Information()
 					.MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
 					.Enrich.FromLogContext()
-					.Enrich.WithSpan() // Добавляет SpanId и TraceId в логи
+					.Enrich.With(new ActivityCorrelationEnricher())
 					.WriteTo.File("Logs/scanner-.log", rollingInterval: Serilog.RollingInterval.Day, shared: true)
 					.WriteTo.Async(_ =>
 						_.MSSqlServer(
@@ -82,9 +87,14 @@ namespace Scanner.WPF
 				// infrastructure
 				services.AddSingleton<IMessenger>(WeakReferenceMessenger.Default);
 				services.AddSingleton<TrayIconService>();
-				services.AddSingleton<ScanChannel>();
-				services.AddSingleton<Sender>();
 				services.AddScoped<IScanEventSink, MessengerScanEventSink>();
+
+				// channels
+				services.AddSingleton<ScanChannel>();
+				services.AddSingleton<ErrorReportChannel>();
+
+				// mailer
+				services.AddSingleton<Sender>();
 
 				//Db
 				services.AddSingleton<IDbConnectionFactory, DbConnectionFactory>();
@@ -100,17 +110,16 @@ namespace Scanner.WPF
 				// обработка данных и отправка в БД
 				services.AddScoped<IScanProcessor, ScanProcessor>();
 
+				// Produccers
+				services.AddSingleton<IErrorReporter, ErrorReporter>();  // отправка ошибок в канал отчетов
+
 				// состояние сканера
 				services.AddSingleton<IScannerRuntimeState, ScannerRuntimeState>();
 
 				// фоновая работа (BackgroundService)
-				services.AddHostedService<SerialScannerHostedService>();
-				services.AddHostedService<ScanProcessingHostedService>();
-
-				services.AddOpenTelemetry().WithTracing(_ => _
-					.AddSource(ScannerTelemetry.ActivitySourceName)
-					.AddSqlClientInstrumentation()
-					.AddProcessor(new BatchActivityExportProcessor(new SerilogSpanExporter())));
+				services.AddHostedService<SerialScannerHostedService>(); // Producer
+				services.AddHostedService<ScanProcessingHostedService>(); // Consumer
+				services.AddHostedService<ErrorReportingHostedService>(); // Consumer
 			})
 			.Build();
 
@@ -126,14 +135,30 @@ namespace Scanner.WPF
 			await Host.StartAsync();
 			Scope = Host.Services.CreateScope();
 
+			var report = Host.Services.GetRequiredService<IErrorReporter>();
+
 			// Обработчик исключений UI-потока
-			DispatcherUnhandledException += App_DispatcherUnhandledException;
+			DispatcherUnhandledException += (_, asgs) =>
+			{
+				report.Report(asgs.Exception, "DispatcherUnhandledException");
+				asgs.Handled = true;
+				ShowFatalOnce();
+			};
 
 			// Обработчик исключений в фоновых потоках
-			AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
+			AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+			{
+				report.Report((Exception)args.ExceptionObject, "CurrentDomain_UnhandledException");
+				ShowFatalOnce();
+			};
 
 			// Обработчик необработанных исключений в Task
-			TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
+			TaskScheduler.UnobservedTaskException += (_, args) =>
+			{
+				report.Report(args.Exception, "UnobservedTaskException");
+				args.SetObserved();
+				ShowFatalOnce();
+			};
 
 			// Включаем автозапуск один раз в реестре
 			const string appName = "Scanner";
@@ -160,6 +185,21 @@ namespace Scanner.WPF
 			base.OnStartup(e);
 		}
 
+		private static int fatalShown;
+		private static void ShowFatalOnce()
+		{
+			if (Interlocked.Exchange(ref fatalShown, 1) != 0) return;
+
+			System.Windows.Application.Current.Dispatcher.Invoke((() =>
+			{
+				System.Windows.MessageBox.Show(
+					"Произошла необработанная ошибка приложения. Работа будет продолжена, но возможны сбои в работе.",
+					"Ошибка",
+					MessageBoxButton.OK,
+					MessageBoxImage.Error);
+			}));
+		}
+
 		/// <summary>
 		/// Метод, вызываемый при выходе из приложения.
 		/// </summary>
@@ -174,115 +214,6 @@ namespace Scanner.WPF
 			}
 			finally { base.OnExit(e); }
 		}
-
-		#region Обработчики исключений, отправка сообщений об ошибках
-
-		/// <summary>
-		/// Обработчик необработанных исключений в Task
-		/// </summary>
-		/// <param name="sender"></param>
-		/// <param name="e"></param>
-		private void TaskScheduler_UnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
-		{
-			// Обработка исключения
-			HandleException(e.Exception);
-			// Отменяем исключение, чтобы оно не привело к завершению приложения
-			e.SetObserved(); // Помечаем исключение как обработанное
-		}
-
-		/// <summary>
-		/// Обработчик необработанных исключений в AppDomain
-		/// </summary>
-		/// <param name="sender"></param>
-		/// <param name="e"></param>
-		private void CurrentDomain_UnhandledException(object? sender, UnhandledExceptionEventArgs e)
-		{
-			// Обработка исключения
-			HandleException((Exception)e.ExceptionObject);
-		}
-
-		/// <summary>
-		/// Обработчик исключений UI-потока
-		/// </summary>
-		/// <param name="sender"></param>
-		/// <param name="e"></param>
-		private void App_DispatcherUnhandledException(object? sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
-		{
-			// Обработка исключения
-			HandleException(e.Exception);
-			e.Handled = true; // Предотвращаем крах приложения			
-		}
-
-		/// <summary>
-		/// Обработчик исключений с выводом сообщения пользователю и отправкой на почту
-		/// </summary>
-		/// <param name="ex"></param>
-		private void HandleException(Exception ex)
-		{
-			try
-			{
-				// Получаем сервис отправки почты и отправляем сообщение об ошибке
-				var mail = Host.Services.GetRequiredService<Sender>();
-				mail.SendAsync(new MailParameters
-				{
-					Text = TextMail(ex),
-					Recipients = ["teho19@vkt-vent.ru"],
-					RecipientsBcc = ["progto@vkt-vent.ru"],
-					Subject = "Errors in Scanner.WPF",
-					SenderName = "Scanner.WPF",
-				}).ConfigureAwait(false);
-
-				// Показ сообщения пользователю
-				System.Windows.MessageBox.Show(
-					"Произошла ошибка в работе приложения. Сообщите разработчикам в ТО.",
-					"Произошла критическая ошибка.",
-				MessageBoxButton.OK,
-				MessageBoxImage.Error);
-			}
-			catch
-			{
-				// Показ сообщения пользователю
-				System.Windows.MessageBox.Show(
-					"Произошла вторая ошибка в работе приложения. Сообщите разработчикам в ТО.",
-					"Произошла критическая ошибка.",
-				MessageBoxButton.OK,
-				MessageBoxImage.Error);
-			}
-		}
-
-		/// <summary>
-		/// Метод для формирования текста письма с информацией об исключении.
-		/// </summary>
-		/// <param name="ex"></param>
-		/// <returns></returns>
-		private static string TextMail(Exception ex)
-		{
-
-			return $@"
-<pre>
-Scanner.WPF,
-Время: {DateTime.Now},
-Глобальная обработка исключений.
-
-Учётная запись: {Environment.UserName}
-Имя компьютера: {Environment.MachineName}
-
-Сводка об ошибке: 
-
-Message: {ex.Message}.
-
-
-StackTrace: {ex.StackTrace}.
-
-
-Source: {ex.Source}.
-
-
-InnerException: {ex?.InnerException}.
-
-</pre>";
-		}
-		#endregion
 	}
 
 }

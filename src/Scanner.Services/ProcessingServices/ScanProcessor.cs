@@ -4,7 +4,6 @@ using Microsoft.Extensions.Options;
 using Scanner.Abstractions.Contracts;
 using Scanner.Abstractions.Extensions;
 using Scanner.Abstractions.Messages;
-using Scanner.Abstractions.Metrics;
 using Scanner.Abstractions.Models;
 
 namespace Scanner.Services.ProcessingServices
@@ -32,39 +31,48 @@ namespace Scanner.Services.ProcessingServices
 		{
 			if (!options.KnownPrefixes.Any(_ => line.Line.StartsWith(_, StringComparison.OrdinalIgnoreCase)))
 			{
-				ScannerTelemetry.ScansFiltered.Add(1);
+				logger.LogDebug("Отфильтровали по префиксам. Промах с префиесом");//scan.filtered prefix_miss
 				return;
 			}
 
 			if (!line.Line.TryParseScan(out var column, out var idAuto))
 			{
-				ScannerTelemetry.ScansFailed.Add(1);
-				logger.LogWarning("Не удалось распарсить скан: {Line}", line.Line);
+				logger.LogWarning("Предупреждение. Не спарсились данные");//scan.failed parse_error
 				return;
 			}
 
-			var dateNow = DateTime.Now;
-			var isChecked = await compliteRepository.SetDateDbRowsByIdAutoAsync(column, idAuto, dateNow, token);
-			if (!isChecked)
+			using (logger.BeginScope(new Dictionary<string, object>
 			{
-				ScannerTelemetry.ScansFailed.Add(1);
-				logger.LogWarning("Не удалось обновить запись для idAuto: {IdAuto}, column: {Column}", idAuto, column);
-				return;
-			}
-
-			ScannerTelemetry.ScansDbUpdated.Add(1);
-
-			InformationOnAutomation? automations = await compliteRepository.GetNameAutoDbRowsByIdAutoAsync(idAuto, column, dateNow, token);
-			if (automations is null)
+				["id_auto"] = idAuto,
+				["column"] = column
+			}))
 			{
-				ScannerTelemetry.ScansFailed.Add(1);
-				logger.LogWarning("Не найдена запись автоматики для idAuto: {IdAuto}, column: {Column}", idAuto, column);
+				logger.LogInformation("Данные успешно спарсились");
+
+				var dateNow = DateTime.Now;
+				var isChecked = await compliteRepository.SetDateDbRowsByIdAutoAsync(column, idAuto, dateNow, token);
+				if (!isChecked)
+				{
+					logger.LogWarning("Предупреждение. Обновлено НОЛЬ записей в БД");//scan.failed db_update_zero_rows
+					return;
+				}
+
+				logger.LogInformation("БД обновлена");//db.updated
+
+				InformationOnAutomation? automation = await compliteRepository.GetNameAutoDbRowsByIdAutoAsync(idAuto, column, dateNow, token);
+				if (automation is null)
+				{
+					logger.LogWarning("Предупреждение. Автоматика не найдена");//scan.failed automation_not_found
+					return;
+				}
+
+				logger.LogInformation("Результаты: Номер заказа={zak} Артикул={art} Отделение={dep} Участок={vkc}",
+					automation.ZakNm, automation.Art, automation.Department, automation.NameVkc);
+
+				scanEventSink.PublishScanEvent(new ScanReceivedMessage(automation));
+
 				return;
 			}
-
-			scanEventSink.PublishScanEvent(new ScanReceivedMessage(automations));
-
-			return;
 		}
 	}
 }
