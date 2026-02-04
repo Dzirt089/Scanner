@@ -8,5 +8,9 @@
     <Project Path="src/Scanner.Services/Scanner.Services.csproj" />
     <Project Path="src/Scanner.WPF/Scanner.WPF.csproj" />
   </Folder>
-  <Folder Name="/tests/" />
+  <Folder Name="/tests/">
+    <Project Path="tests/Scanner.Abstractions.UnitTests/Scanner.Abstractions.UnitTests.csproj" Id="928afcbd-987b-403c-8279-4ed696b6b79d" />
+    <Project Path="tests/Scanner.Infrastructure.UnitTests/Scanner.Infrastructure.UnitTests.csproj" Id="5f6b13fd-34f1-4525-84b9-d039adc6e48e" />
+    <Project Path="tests/Scanner.Services.UnitTests/Scanner.Services.UnitTests.csproj" Id="13006f7f-df42-4d2e-be04-0cf3de7de14a" />
+  </Folder>
 </Solution>

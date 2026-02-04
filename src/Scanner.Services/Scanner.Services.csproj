@@ -18,4 +18,8 @@
     <ProjectReference Include="..\Scanner.Models\Scanner.Abstractions.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Scanner.Services.UnitTests" />
+  </ItemGroup>
+
 </Project>

@@ -33,11 +33,24 @@ namespace Scanner.Services.SystemServices
 
 		public static IReadOnlyCollection<string> Get()
 		{
-			var ports = GetViaSetupApi();
-			if (ports.Count > 0)
-				return ports;
+			var allPorts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-			return GetViaRegistry();
+			// 1. Пробуем современный и точный способ (SetupAPI)
+			var setupPorts = GetViaSetupApi();
+			allPorts.UnionWith(setupPorts);
+
+			// 2. Если SetupAPI ничего не нашёл или нашёл мало — дополняем из реестра
+			//    (на старых системах SetupAPI может быть пустым, на новых — наоборот)
+			var registryPorts = GetViaRegistry();
+
+			// Добавляем только то, чего ещё нет
+			allPorts.UnionWith(registryPorts);
+
+			// Можно добавить отладочный лог, если нужно понять, откуда что пришло
+			// logger?.LogDebug("Порты из SetupAPI: {0}, из реестра: {1}, итого уникальных: {2}",
+			//     setupPorts.Count, registryPorts.Count, allPorts.Count);
+
+			return allPorts.ToList().AsReadOnly();  // или просто allPorts (HashSet реализует IReadOnlyCollection)
 		}
 
 		private static IReadOnlyCollection<string> GetViaRegistry()

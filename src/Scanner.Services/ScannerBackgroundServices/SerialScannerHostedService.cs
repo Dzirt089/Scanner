@@ -25,6 +25,8 @@ namespace Scanner.Services.ScannerBackgroundServices
 		/// </summary>
 		private readonly ConcurrentDictionary<string, PortListener> listeners = new(StringComparer.OrdinalIgnoreCase);
 
+		private readonly ConcurrentDictionary<string, string> continuePorts = new(StringComparer.OrdinalIgnoreCase);
+
 		public SerialScannerHostedService(ScanChannel channel, ILogger<SerialScannerHostedService> logger, IOptions<ScannerOptions> options, IScannerRuntimeState scannerRuntimeState, IErrorReporter reporter)
 		{
 			this.channel = channel;
@@ -34,16 +36,25 @@ namespace Scanner.Services.ScannerBackgroundServices
 			this.reporter = reporter;
 		}
 
-		private void TryOpen(PortListener listener)
+		private bool TryOpen(PortListener listener)
 		{
 			try
 			{
 				listener.Open();
+				return true;
+			}
+			catch (UnauthorizedAccessException ex)
+			{
+				//порт занят другим приложением
+				continuePorts.TryAdd(listener.PortName, ex.Message);
+				logger.LogWarning(ex, "Порт занят другим приложением: {port}", listener.PortName);
+				return false;
 			}
 			catch (Exception ex)
 			{
 				reporter.Report(ex, $"PortListener.Open:{listener.PortName}");
 				logger.LogWarning(ex, "Не удалось открыть port: {port}", listener.PortName);
+				return false;
 			}
 		}
 
@@ -58,6 +69,9 @@ namespace Scanner.Services.ScannerBackgroundServices
 
 				// удаляем исчезнувший port со слушателем
 				DeleteDeathPorts(portsSet);
+
+				// фильтруем занятые порты
+				FilterBusyPorts(portsSet, continuePorts);
 
 				// добавляем новый port или обновляем существующий
 				AddOrUpdatePortListener(portsSet, now);
@@ -78,6 +92,31 @@ namespace Scanner.Services.ScannerBackgroundServices
 			}
 		}
 
+		private void FilterBusyPorts(HashSet<string> portsSet, ConcurrentDictionary<string, string> busyPorts)
+		{
+			var busyPortsArray = continuePorts.Keys.ToArray();
+			var busyPortsSet = new HashSet<string>(busyPortsArray, StringComparer.OrdinalIgnoreCase);
+
+			foreach (var port in busyPortsSet)
+			{
+				if (portsSet.Contains(port))
+				{
+					portsSet.Remove(port);
+					if (listeners.TryRemove(port, out var listener))
+					{
+						listener.Dispose();
+						scannerRuntimeState.Remove(port);
+						logger.LogInformation("Слушатель расположенный к {port} (порт занят)", port);
+					}
+				}
+				else
+				{
+					//порт освободился
+					continuePorts.TryRemove(port, out var _);
+				}
+			}
+		}
+
 		/// <summary>
 		/// добавляем новый port или обновляем существующий
 		/// </summary>
@@ -87,32 +126,58 @@ namespace Scanner.Services.ScannerBackgroundServices
 		{
 			foreach (var port in portsSet)
 			{
-				// добавляем новый port или обновляем существующий
-				listeners.AddOrUpdate(port,
-					addValueFactory: port =>
+				if (listeners.TryGetValue(port, out var existing))
+				{
+					// Watchdog(сторожевой таймер): если порт "залип" (давно нет данных) — пересоздадим listener
+					var staleSec = (now - existing.LastReceived).TotalSeconds;
+					if ((staleSec > options.PortStaleSeconds) || (existing.HasFaulted))
 					{
-						var listner = new PortListener(port, channel.Channel.Writer, reporter);
-						TryOpen(listner);
-						logger.LogInformation("Слушатель создан для port: {port}", port);
-						return listner;
-					},
-					updateValueFactory: (port, existing) =>
-					{
-						// Watchdog(сторожевой таймер): если порт "залип" (давно нет данных) — пересоздадим listener
-						var staleSec = (now - existing.LastReceived).TotalSeconds;
-						if ((staleSec > options.PortStaleSeconds) || (existing.HasFaulted))
-						{
-							logger.LogWarning(existing.LastError, "Слушатель устарел или завершился с ошибкой для {port}, воссоздаём", port);
-							existing.Dispose();
-							scannerRuntimeState.Remove(existing.PortName);
+						logger.LogWarning(existing.LastError, "Слушатель устарел или завершился с ошибкой для {port}, воссоздаём", port);
+						existing.Dispose();
+						scannerRuntimeState.Remove(existing.PortName);
+						listeners.TryRemove(port, out var _);
+					}
+					continue;
+				}
 
-							var listner = new PortListener(port, channel.Channel.Writer, reporter);
-							TryOpen(listner);
-							return listner;
-						}
+				var listner = new PortListener(port, channel.Channel.Writer, reporter);
+				var isOpen = TryOpen(listner);
+				if (isOpen)
+				{
+					listeners.TryAdd(port, listner);
+					logger.LogInformation("Слушатель создан для port: {port}", port);
+				}
+				else
+				{
+					listner.Dispose();
+				}
 
-						return existing;
-					});
+				//// добавляем новый port или обновляем существующий
+				//listeners.AddOrUpdate(port,
+				//	addValueFactory: port =>
+				//	{
+				//		var listner = new PortListener(port, channel.Channel.Writer, reporter);
+				//		TryOpen(listner);
+				//		logger.LogInformation("Слушатель создан для port: {port}", port);
+				//		return listner;
+				//	},
+				//	updateValueFactory: (port, existing) =>
+				//	{
+				//		// Watchdog(сторожевой таймер): если порт "залип" (давно нет данных) — пересоздадим listener
+				//		var staleSec = (now - existing.LastReceived).TotalSeconds;
+				//		if ((staleSec > options.PortStaleSeconds) || (existing.HasFaulted))
+				//		{
+				//			logger.LogWarning(existing.LastError, "Слушатель устарел или завершился с ошибкой для {port}, воссоздаём", port);
+				//			existing.Dispose();
+				//			scannerRuntimeState.Remove(existing.PortName);
+
+				//			var listner = new PortListener(port, channel.Channel.Writer, reporter);
+				//			TryOpen(listner);
+				//			return listner;
+				//		}
+
+				//		return existing;
+				//	});
 			}
 		}
 		private void UpdateScannerRuntimeState()
@@ -139,6 +204,11 @@ namespace Scanner.Services.ScannerBackgroundServices
 						listener.Dispose();
 						scannerRuntimeState.Remove(keyValue.Key);
 						logger.LogInformation("Слушатель расположенный к {port} (порт исчез)", keyValue.Key);
+					}
+
+					if (continuePorts.TryRemove(keyValue.Key, out var _))
+					{
+						logger.LogInformation("Порт освобождён {port} (порт исчез)", keyValue.Key);
 					}
 				}
 			}
