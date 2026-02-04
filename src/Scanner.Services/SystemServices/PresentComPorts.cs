@@ -1,4 +1,6 @@
-﻿using System.ComponentModel;
+﻿using Microsoft.Win32;
+
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -30,6 +32,40 @@ namespace Scanner.Services.SystemServices
 		private static readonly Regex ComRegex = new(@"\(COM(\d+)\)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
 		public static IReadOnlyCollection<string> Get()
+		{
+			var ports = GetViaSetupApi();
+			if (ports.Count > 0)
+				return ports;
+
+			return GetViaRegistry();
+		}
+
+		private static IReadOnlyCollection<string> GetViaRegistry()
+		{
+			var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+			// Выполняем только на Windows, чтобы избежать CA1416.
+			if (!OperatingSystem.IsWindows())
+				return result;
+
+			using var key = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DEVICEMAP\SERIALCOMM");
+			if (key != null)
+			{
+				foreach (var valueName in key.GetValueNames())
+				{
+					// Значение вроде \Device\USBSER000 или \Device\VCP0, а данные — COM5
+					var comValue = key.GetValue(valueName) as string;
+					if (!string.IsNullOrEmpty(comValue) && comValue.StartsWith("COM", StringComparison.OrdinalIgnoreCase))
+					{
+						result.Add(comValue.ToUpperInvariant()); // нормализуем как COM5
+					}
+				}
+			}
+
+			return result;
+		}
+
+		public static IReadOnlyCollection<string> GetViaSetupApi()
 		{
 			var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 

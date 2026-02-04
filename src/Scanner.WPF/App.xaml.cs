@@ -37,6 +37,44 @@ namespace Scanner.WPF
 	public partial class App : System.Windows.Application
 	{
 		/// <summary>
+		/// Межпроцессная синхронизация
+		/// </summary>
+		/// <remarks>
+		/// Named Mutex — чтобы не было двух экземпляров приложения (второй просто не стартует).
+		/// </remarks>
+		private static Mutex? instanceMutex;
+
+		private static bool TryAcquireSingleInstanceMutex()
+		{
+			// Имя должно быть уникальным в системе
+			// Local\ — достаточно для обычного десктоп-приложения (в пределах сессии пользователя)
+			// Global\ — если нужно на весь компьютер/все сессии (актуально для терминалок/сервисов)
+			// Global *может потребовать права / усложнить жизнь в корпоративной среде.
+			const string mutexName = @"Local\VKT_ScannerApp_Mutex";
+
+			bool createdNew;
+
+			try
+			{
+				instanceMutex = new Mutex(initiallyOwned: true, name: mutexName, out createdNew);
+			}
+			catch (AbandonedMutexException)
+			{
+				// Предыдущий экземпляр умер криво — mutex "брошен".
+				// Мы считаем, что теперь "мы первые".
+				createdNew = true;
+			}
+
+			if (!createdNew)
+			{
+				// Не удалось получить мьютекс — уже есть запущенный экземпляр
+				return false;
+			}
+
+			return true;
+		}
+
+		/// <summary>
 		/// Статическое свойство для хранения экземпляра хоста приложения.
 		/// </summary>
 		public static IHost Host { get; } = Microsoft.Extensions.Hosting.Host
@@ -123,7 +161,6 @@ namespace Scanner.WPF
 			})
 			.Build();
 
-
 		public static IServiceScope? Scope { get; private set; }
 
 		/// <summary>
@@ -132,6 +169,13 @@ namespace Scanner.WPF
 		/// <param name="e"></param>
 		protected override async void OnStartup(StartupEventArgs e)
 		{
+			if (!TryAcquireSingleInstanceMutex())
+			{
+				// Уже запущен другой экземпляр приложения. Выходим.
+				Shutdown();
+				return;
+			}
+
 			await Host.StartAsync();
 			Scope = Host.Services.CreateScope();
 
@@ -188,6 +232,7 @@ namespace Scanner.WPF
 		private static int fatalShown;
 		private static void ShowFatalOnce()
 		{
+			// Interlocked.Exchange — атомарный “выполни один раз”
 			if (Interlocked.Exchange(ref fatalShown, 1) != 0) return;
 
 			System.Windows.Application.Current.Dispatcher.Invoke((() =>
@@ -212,7 +257,12 @@ namespace Scanner.WPF
 				await Host.StopAsync();
 				Host?.Dispose();
 			}
-			finally { base.OnExit(e); }
+			finally
+			{
+				try { instanceMutex?.ReleaseMutex(); } catch { }
+				instanceMutex?.Dispose();
+				base.OnExit(e);
+			}
 		}
 	}
 

@@ -20,6 +20,9 @@ namespace Scanner.Services.ScannerBackgroundServices
 		private readonly IScannerRuntimeState scannerRuntimeState;
 		private readonly IErrorReporter reporter;
 
+		/// <summary>
+		/// потокобезопасные операции add/update/remove (слушатели, runtime state).
+		/// </summary>
 		private readonly ConcurrentDictionary<string, PortListener> listeners = new(StringComparer.OrdinalIgnoreCase);
 
 		public SerialScannerHostedService(ScanChannel channel, ILogger<SerialScannerHostedService> logger, IOptions<ScannerOptions> options, IScannerRuntimeState scannerRuntimeState, IErrorReporter reporter)

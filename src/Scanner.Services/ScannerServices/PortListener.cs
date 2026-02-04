@@ -13,6 +13,9 @@ namespace Scanner.Services.ScannerServices
 		private readonly ChannelWriter<ScanLine> writer;
 		private readonly IErrorReporter reporter;
 
+		/// <summary>
+		/// защищает StringBuilder+buffering от гонок.
+		/// </summary>
 		private readonly object sync = new();
 		private readonly StringBuilder buffer = new();
 
@@ -23,14 +26,19 @@ namespace Scanner.Services.ScannerServices
 		private Exception? _lastError;
 		public Exception? LastError => _lastError;
 
-
-		private int _hasFaulted;
+		/// <summary>
+		/// Volatile.Read - lock-free флаг “слушатель упал” 
+		/// </summary>
 		public bool HasFaulted => Volatile.Read(ref _hasFaulted) == 1;
+		private int _hasFaulted;
 
 		private void MarkFaulted(Exception ex)
 		{
-			Volatile.Write(ref _hasFaulted, 1);
 			_lastError = ex;
+
+			// Volatile.Write - lock-free флаг “слушатель упал” mutual exclusion
+			Volatile.Write(ref _hasFaulted, 1);
+
 			reporter.Report(ex, $"PortListener:{PortName}");
 		}
 

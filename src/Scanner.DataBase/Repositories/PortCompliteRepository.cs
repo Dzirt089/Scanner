@@ -28,7 +28,7 @@ namespace Scanner.Infrastructure.Repositories
 		{
 			string sql = $"SELECT id FROM tbVKT_PlanAuto_PartComplete WHERE idAuto = @IdAuto";
 
-			await using var con = await connectionFactory.CreateAsync();
+			await using var con = await connectionFactory.CreateAsync(token);
 
 			var cmd = new CommandDefinition(sql, new { IdAuto = idAuto }, cancellationToken: token);
 			int? result = await con.QueryFirstOrDefaultAsync<int>(cmd);
@@ -42,7 +42,7 @@ namespace Scanner.Infrastructure.Repositories
 
 			string sql = $"UPDATE tbVKT_PlanAuto_PartComplete Set {columnSql} = @DateNow WHERE idAuto = @IdAuto";
 
-			await using var con = await connectionFactory.CreateAsync();
+			await using var con = await connectionFactory.CreateAsync(token);
 
 			var cmd = new CommandDefinition(sql, new { DateNow = date, IdAuto = idAuto }, cancellationToken: token);
 			int row = await con.ExecuteAsync(cmd);
@@ -63,7 +63,7 @@ namespace Scanner.Infrastructure.Repositories
 							  ,@ScanerTime as ScanerTime
 							FROM tbVKT_PlanAuto WHERE id = @IdAuto";
 
-			await using var con = await connectionFactory.CreateAsync();
+			await using var con = await connectionFactory.CreateAsync(token);
 
 			var cmd = new CommandDefinition(sql, new { IdAuto = idAuto, Department = departamentSql, ScanerTime = date }, cancellationToken: token);
 			var result = await con.QueryFirstOrDefaultAsync<InformationOnAutomation>(cmd);

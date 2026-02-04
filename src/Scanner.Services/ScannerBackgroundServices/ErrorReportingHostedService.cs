@@ -32,6 +32,15 @@ namespace Scanner.Services.ScannerBackgroundServices
 				{
 					var ex = report.Exception;
 
+					// 1) порт занят — не шлём
+					if (ex is UnauthorizedAccessException &&
+						report.SourceContext.StartsWith("PortListener.Open", StringComparison.OrdinalIgnoreCase))
+						continue;
+
+					// 2) штатная отмена — не шлём
+					if (ex is OperationCanceledException)
+						continue;
+
 					logger.LogError(ex, "Необработанная ошибка [{Source}]", report.SourceContext);
 					var signature = $"{report.SourceContext}|{ex.GetType().FullName}|{ex.Message}";
 

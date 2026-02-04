@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Scanner.WPF"
         mc:Ignorable="d"
-        Title="Сканнер" Height="450" Width="800"
+        Title="Сканнер" Height="450" Width="1000"
         Icon="/Icons/Scanner-3.ico">
     <Grid>
 		<Grid.RowDefinitions>
@@ -19,9 +19,9 @@
 				<GridView>
 					<GridViewColumn Header="№ Заказа" Width="70"
                                     DisplayMemberBinding="{Binding ZakNm}"/>
-					<GridViewColumn Header="Артикул" Width="120"
+					<GridViewColumn Header="Артикул" Width="180"
                                     DisplayMemberBinding="{Binding Art}"/>
-					<GridViewColumn Header="Наименование" Width="200"
+					<GridViewColumn Header="Наименование" Width="300"
                                     DisplayMemberBinding="{Binding Name}"/>
 					<GridViewColumn Header="Система" Width="50"
 									DisplayMemberBinding="{Binding NameVkc}"/>

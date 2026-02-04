@@ -8,6 +8,9 @@ namespace Scanner.Services.ScannerServices
 {
 	public sealed class ScannerRuntimeState : IScannerRuntimeState
 	{
+		/// <summary>
+		/// потокобезопасные операции add/update/remove (слушатели, runtime state).
+		/// </summary>
 		private readonly ConcurrentDictionary<string, ScanModel> listenersScanModel = new(StringComparer.OrdinalIgnoreCase);
 
 		public void TryUpsert(string portName, ScanModel scanModel)

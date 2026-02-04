@@ -46,6 +46,14 @@ IScanProcessor -> Repository (Dapper) -> SQL Server
 
 ---
 
+> В проекте ключевые “стабилизаторы” такие:
+- `Channel` — главная очередь и разграничение producer/consumer
+- `lock в PortListener` — защита фрейминга и StringBuilder
+- `ConcurrentDictionary` — безопасное управление жизненным циклом listeners/state
+- `Interlocked` — “однократность” без lock
+- `Volatile` — корректная видимость флагов между потоками
+- `Mutex` — защита от двойного запуска приложения
+
 ## Основные компоненты
 
 ### 1) `SerialScannerHostedService` (Producer)
