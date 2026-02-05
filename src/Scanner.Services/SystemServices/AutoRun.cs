@@ -1,97 +1,108 @@
 ﻿using Microsoft.Win32;
 
 using System.ComponentModel;
-using System.Diagnostics;
 
-namespace Scanner.Services.SystemServices
+namespace Scanner.Services.SystemServices;
+
+public static class AutoRun
 {
-	public static class AutoRun
+	private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+
+	// ClickOnce-вариант: автозапуск через .appref-ms (ищем в Start Menu)
+	public static bool TryEnableCurrentUserClickOnce(string appName, string appRefMsFileName, out Exception? error)
 	{
-		// Ключи Run
-		private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-
-		/// <summary>
-		/// Включить автозапуск для текущего пользователя (HKCU).
-		/// </summary>
-		public static void EnableCurrentUser(string appName, string exePath, string? args = null)
+		error = null;
+		try
 		{
-			// Выполняем только на Windows, чтобы избежать CA1416.
-			if (!OperatingSystem.IsWindows())
-				return;
+			EnableCurrentUserClickOnce(appName, appRefMsFileName);
+			return true;
+		}
+		catch (Exception ex)
+		{
+			error = ex;
+			return false;
+		}
+	}
 
-			if (string.IsNullOrWhiteSpace(appName)) throw new ArgumentException("appName is empty");
-			if (string.IsNullOrWhiteSpace(exePath)) throw new ArgumentException("exePath is empty");
-			if (!File.Exists(exePath)) throw new FileNotFoundException("exe not found", exePath);
+	public static bool TryDisableCurrentUser(string appName, out Exception? error)
+	{
+		error = null;
+		try
+		{
+			DisableCurrentUser(appName);
+			return true;
+		}
+		catch (Exception ex)
+		{
+			error = ex;
+			return false;
+		}
+	}
 
-			var value = BuildCommandLine(exePath, args);
+	public static bool IsEnabledCurrentUser(string appName, out string? commandLine)
+	{
+		commandLine = null;
+		if (!OperatingSystem.IsWindows()) return false;
 
-			using var key = Registry.CurrentUser.CreateSubKey(RunKeyPath, writable: true)
-				?? throw new Win32Exception("Cannot open HKCU Run key");
+		using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: false);
+		commandLine = key?.GetValue(appName) as string;
+		return !string.IsNullOrWhiteSpace(commandLine);
+	}
 
-			key.SetValue(appName, value, RegistryValueKind.String);
+	public static void DisableCurrentUser(string appName)
+	{
+		if (!OperatingSystem.IsWindows()) return;
+
+		using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true);
+		key?.DeleteValue(appName, throwOnMissingValue: false);
+	}
+
+	public static void EnableCurrentUserClickOnce(string appName, string appRefMsFileName)
+	{
+		if (!OperatingSystem.IsWindows()) return;
+
+		if (string.IsNullOrWhiteSpace(appName)) throw new ArgumentException("appName is empty");
+		if (string.IsNullOrWhiteSpace(appRefMsFileName)) throw new ArgumentException("appRefMsFileName is empty");
+
+		var appRefMsPath = FindAppRefMs(appRefMsFileName)
+			?? throw new FileNotFoundException(
+				$"Не найден {appRefMsFileName}.appref-ms в меню Пуск (Programs/CommonPrograms).");
+
+		// Это ровно то, как Windows открывает .appref-ms 
+		var value = BuildClickOnceCommandLine(appRefMsPath);
+
+		using var key = Registry.CurrentUser.CreateSubKey(RunKeyPath, writable: true)
+			?? throw new Win32Exception("Cannot open HKCU Run key");
+
+		key.SetValue(appName, value, RegistryValueKind.String);
+	}
+
+	private static string BuildClickOnceCommandLine(string appRefMsPath)
+	{
+		// Просто полный путь в кавычках — Windows сама обработает .appref-ms через ассоциацию
+		return $"\"{appRefMsPath}\"";
+	}
+
+
+	private static string? FindAppRefMs(string appRefMsFileName)
+	{
+		// Start Menu\Programs текущего пользователя
+		var p1 = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
+
+		// Start Menu\Programs для всех пользователей
+		var p2 = Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms);
+
+		// Иногда ClickOnce кладёт ярлык и на Desktop — можешь включить при желании:
+		// var p3 = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+
+		static string? TryFind(string root, string fileName)
+		{
+			if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return null;
+
+			return Directory.EnumerateFiles(root, "*.appref-ms", SearchOption.AllDirectories)
+				.FirstOrDefault(f => string.Equals(Path.GetFileName(f), fileName, StringComparison.OrdinalIgnoreCase));
 		}
 
-		/// <summary>
-		/// Выключить автозапуск для текущего пользователя (HKCU).
-		/// </summary>
-		public static void DisableCurrentUser(string appName)
-		{
-			// Выполняем только на Windows, чтобы избежать CA1416.
-			if (!OperatingSystem.IsWindows())
-				return;
-
-			using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true);
-
-			// Если ключа нет — ничего не делать
-			if (key is null)
-				return;
-
-			key.DeleteValue(appName, throwOnMissingValue: false);
-		}
-
-		/// <summary>
-		/// Проверить включен ли автозапуск для текущего пользователя.
-		/// </summary>
-		public static bool IsEnabledCurrentUser(string appName, out string? commandLine)
-		{
-			// Выполняем только на Windows, чтобы избежать CA1416.
-			if (OperatingSystem.IsWindows())
-			{
-				using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: false);
-				commandLine = key?.GetValue(appName) as string;
-				return !string.IsNullOrWhiteSpace(commandLine);
-			}
-			else
-			{
-				commandLine = null;
-				return false;
-			}
-		}
-
-		/// <summary>
-		/// Правильно формируем командную строку для Run: "path to exe" + args
-		/// </summary>
-		private static string BuildCommandLine(string exePath, string? args)
-		{
-			// Кавычки вокруг exe обязательны, если есть пробелы — мы ставим всегда, так безопаснее.
-			var quotedExe = $"\"{exePath}\"";
-			if (string.IsNullOrWhiteSpace(args))
-				return quotedExe;
-
-			return quotedExe + " " + args.Trim();
-		}
-
-		/// <summary>
-		/// Удобный способ получить путь к текущему exe
-		/// </summary>
-		public static string GetCurrentExePath()
-		{
-			// .NET 6+
-			if (!string.IsNullOrWhiteSpace(Environment.ProcessPath))
-				return Environment.ProcessPath!;
-
-			// fallback
-			return Process.GetCurrentProcess().MainModule!.FileName!;
-		}
+		return TryFind(p1, appRefMsFileName) ?? TryFind(p2, appRefMsFileName);
 	}
 }

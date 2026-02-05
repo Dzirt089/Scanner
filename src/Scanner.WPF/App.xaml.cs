@@ -205,26 +205,19 @@ namespace Scanner.WPF
 			};
 
 			// Включаем автозапуск один раз в реестре
-			const string appName = "Scanner";
-			if (!AutoRun.IsEnabledCurrentUser(appName, out _))
+			const string AppName = "Scanner";
+			const string AppRefMsFile = "Сканеры.appref-ms";
+			if (!AutoRun.IsEnabledCurrentUser(AppName, out _))
 			{
-				var exe = AutoRun.GetCurrentExePath();
-				AutoRun.EnableCurrentUser(appName, exe, "--minimized");
+				AutoRun.TryEnableCurrentUserClickOnce(AppName, AppRefMsFile, out _);
 			}
 
 			var tray = Scope.ServiceProvider.GetRequiredService<TrayIconService>();
 			tray.Initialize();
 
-			// Если запуск происходит из автозапуска
-			var startMinimized = e.Args.Any(_ => string.Equals(_, "--minimized", StringComparison.OrdinalIgnoreCase));
-
 			var mainView = Scope.ServiceProvider.GetRequiredService<MainViewModel>();
 			var window = new MainWindow { DataContext = mainView };
-
-			if (startMinimized)
-				window.Hide(); // Приложение свернуто в трее
-			else
-				window.Show(); // Показываем при первом запуске главное окно
+			window.Hide(); // Приложение свернуто в трее
 
 			base.OnStartup(e);
 		}
